@@ -5,40 +5,49 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>The Global Mixtape</title>
     <link rel="stylesheet" href="/static/style.css">
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.1/socket.io.js"></script>
 </head>
 <body>
+
     <div id="startOverlay" class="overlay">
-        <button onclick="startApp()" class="big-start-button">
-            <div class="intro-content">
-                <h1>Welcome to The Global Mixtape 📼</h1>
-                <p>You have tuned into a shared frequency. Everyone on this site hears the exact same track at the exact same time.</p>
-                <div class="instructions">
-                    <strong>How it works:</strong>
-                    <ol>
-                        <li><strong>Tune In:</strong> Click here to sync audio.</li>
-                        <li><strong>Be the DJ:</strong> Paste a YouTube link to queue a song.</li>
-                        <li><strong>Vibe:</strong> Listen as the cassette spins in real-time.</li>
-                    </ol>
-                </div>
-                <div class="cta">CLICK TO START! ▶</div>
+    <button onclick="startApp()" class="big-start-button">
+        <div class="intro-content">
+            <h1>Welcome to The Global Mixtape 📼</h1>
+            <p>You have tuned into a shared frequency. Everyone on this site hears the exact same track at the exact same time—just like gathering around a radio.</p>
+            
+            <div class="instructions">
+                <strong>How it works:</strong>
+                <ol>
+                    <li><strong>Tune In:</strong> Click here to sync audio.</li>
+                    <li><strong>Be the DJ:</strong> Paste a YouTube link to queue a song.</li>
+                    <li><strong>Vibe:</strong> Listen as the cassette spins in real-time.</li>
+                </ol>
             </div>
-        </button>
-    </div>
+            
+            <div class="cta">CLICK TO START!▶</div>
+        </div>
+    </button>
+</div>
 
     <div class="container">
+
         <div class="cassette">
             <div class="screw screw-tl"></div>
             <div class="screw screw-tr"></div>
             <div class="screw screw-bl"></div>
             <div class="screw screw-br"></div>
+            
             <div class="label-area">
                 <h2 id="trackTitle">Waiting for tape...</h2>
             </div>
+            
             <div class="window">
-                <div class="spool left"><div class="wheel"></div></div>
+                <div class="spool left">
+                    <div class="wheel"></div>
+                </div>
                 <div class="tape-connector"></div>
-                <div class="spool right"><div class="wheel"></div></div>
+                <div class="spool right">
+                    <div class="wheel"></div>
+                </div>
             </div>
         </div>
 
@@ -51,12 +60,14 @@
 
         <div class="queue-box">
             <h3>Coming Up Next...</h3>
-            <ul id="queueList"></ul>
+            <ul id="queueList">
+                </ul>
         </div>
     </div>
 
     <div id="player"></div>
+
     <script src="https://www.youtube.com/iframe_api"></script>
     <script src="/static/script.js"></script>
 </body>
-</html>
+</html> 

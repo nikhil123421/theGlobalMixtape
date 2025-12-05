@@ -1,20 +1,37 @@
 import time
 import re
 import requests
+import os
+import redis
+import json
 from flask import Flask, render_template, request, jsonify
 
 app = Flask(__name__)
 
-# --- IN-MEMORY DATABASE ---
-# In a real production app, you might use SQLite, 
-# but for simplicity, lists work fine while the server is running.
-playlist = [] 
-current_track = None
-track_start_time = 0
+# --- CONFIGURATION ---
+# Connect to Render's Redis (or local for testing)
+redis_url = os.environ.get("REDIS_URL", "redis://localhost:6379")
+r = redis.from_url(redis_url)
 
-# --- HELPER: EXTRACT ID & METADATA ---
+# --- STATE MANAGEMENT ---
+def get_room_state():
+    """Fetch the current state from Redis."""
+    raw = r.get("radio_state")
+    if raw:
+        return json.loads(raw)
+    # Default state if Redis is empty
+    return {
+        "playlist": [],
+        "current_track": None,
+        "start_time": 0
+    }
+
+def save_room_state(state):
+    """Save the new state to Redis."""
+    r.set("radio_state", json.dumps(state))
+
+# --- HELPER: YOUTUBE METADATA ---
 def get_video_details(url):
-    # 1. Extract ID using Regex
     video_id = None
     patterns = [
         r'(?:v=|\/)([0-9A-Za-z_-]{11}).*',
@@ -29,21 +46,27 @@ def get_video_details(url):
     if not video_id:
         return None
 
-    # 2. Fetch Metadata using No-Key oEmbed
     try:
+        # Use oEmbed to get title/thumbnail without an API key
         oembed_url = f"https://www.youtube.com/oembed?url=https://www.youtube.com/watch?v={video_id}&format=json"
-        data = requests.get(oembed_url).json()
+        resp = requests.get(oembed_url, timeout=3)
+        if resp.status_code != 200:
+            return None
+            
+        data = resp.json()
         return {
             "id": video_id,
             "title": data.get("title", "Unknown Track"),
             "thumbnail": data.get("thumbnail_url", ""),
-            # We default to 4 minutes if we can't guess duration, 
-            # as oEmbed doesn't always provide duration.
-            # The client logic handles 'song ending' events anyway.
-            "duration": 240 
+            "duration": 240 # Default fallback duration
         }
     except:
         return None
+
+# --- CACHING VARIABLES ---
+# To prevent hammering Redis if 1000 users hit /sync simultaneously
+cache_data = None
+cache_time = 0
 
 # --- ROUTES ---
 
@@ -55,50 +78,83 @@ def index():
 def add_song():
     data = request.json
     url = data.get('url')
+    if not url:
+        return jsonify({"status": "error", "message": "No URL provided"}), 400
+
     details = get_video_details(url)
-    
     if details:
-        # Check if playlist is empty and nothing is playing, play immediately
-        global current_track, track_start_time
-        if current_track is None:
-            current_track = details
-            track_start_time = time.time()
+        state = get_room_state()
+        
+        # If nothing is playing, play this immediately
+        if state['current_track'] is None:
+            state['current_track'] = details
+            state['start_time'] = time.time()
         else:
-            playlist.append(details)
+            # Add to queue
+            state['playlist'].append(details)
+        
+        save_room_state(state)
         return jsonify({"status": "success", "track": details})
-    return jsonify({"status": "error", "message": "Invalid URL"}), 400
+    
+    return jsonify({"status": "error", "message": "Invalid YouTube URL"}), 400
 
 @app.route('/api/sync')
 def sync():
-    global current_track, track_start_time
-
-    # logic to check if song ended
-    if current_track:
-        elapsed = time.time() - track_start_time
-        # Note: Since we don't have exact duration from oEmbed, 
-        # we rely on the frontend to tell us when a song ends, 
-        # OR we just let it run. For this simple version, we stick to state.
+    global cache_data, cache_time
     
-    return jsonify({
-        "current_track": current_track,
-        "start_time": track_start_time,
+    # 1. High-Traffic Cache Check
+    # If we calculated state less than 1 second ago, return cached version.
+    if time.time() - cache_time < 1 and cache_data:
+        # Update server_time so clients can calculate offset accurately
+        response = cache_data.copy()
+        response['server_time'] = time.time()
+        return jsonify(response)
+
+    # 2. Fetch Real State
+    state = get_room_state()
+    
+    response = {
+        "current_track": state['current_track'],
+        "start_time": state['start_time'],
         "server_time": time.time(),
-        "queue": playlist
-    })
+        "queue": state['playlist']
+    }
+
+    # 3. Update Cache
+    cache_data = response
+    cache_time = time.time()
+
+    return jsonify(response)
 
 @app.route('/api/next', methods=['POST'])
 def next_track():
-    """Called by frontend when a song finishes"""
-    global current_track, track_start_time
+    """
+    Called when a song ends.
+    Includes logic to prevent 'double skipping' if multiple users report end.
+    """
+    data = request.json
+    # The client tells us which song ended for them
+    ended_id = data.get('ended_track_id') 
+
+    state = get_room_state()
+    current = state['current_track']
+
+    # CRITICAL CHECK:
+    # Only skip if the song the user says ended is ACTUALLY the one currently playing.
+    # This prevents 1000 users from skipping 1000 songs instantly.
+    if current and current['id'] == ended_id:
+        if state['playlist']:
+            state['current_track'] = state['playlist'].pop(0)
+            state['start_time'] = time.time()
+        else:
+            state['current_track'] = None
+            state['start_time'] = 0
+        
+        save_room_state(state)
+        return jsonify({"status": "skipped"})
     
-    if playlist:
-        current_track = playlist.pop(0)
-        track_start_time = time.time()
-    else:
-        current_track = None
-        track_start_time = 0
-    
-    return jsonify({"status": "playing next"})
+    return jsonify({"status": "already_skipped"})
 
 if __name__ == '__main__':
+    # Local development
     app.run(debug=True, port=5000)
