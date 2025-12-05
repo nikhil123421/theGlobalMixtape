@@ -4,29 +4,29 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>The Global Mixtape</title>
-    <link rel="stylesheet" href="/static/style.css">
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
 </head>
 <body>
 
     <div id="startOverlay" class="overlay">
-    <button onclick="startApp()" class="big-start-button">
-        <div class="intro-content">
-            <h1>Welcome to The Global Mixtape 📼</h1>
-            <p>You have tuned into a shared frequency. Everyone on this site hears the exact same track at the exact same time—just like gathering around a radio.</p>
-            
-            <div class="instructions">
-                <strong>How it works:</strong>
-                <ol>
-                    <li><strong>Tune In:</strong> Click here to sync audio.</li>
-                    <li><strong>Be the DJ:</strong> Paste a YouTube link to queue a song.</li>
-                    <li><strong>Vibe:</strong> Listen as the cassette spins in real-time.</li>
-                </ol>
+        <button onclick="startApp()" class="big-start-button">
+            <div class="intro-content">
+                <h1>Welcome to The Global Mixtape 📼</h1>
+                <p>You have tuned into a shared frequency. Everyone on this site hears the exact same track at the exact same time—just like gathering around a radio.</p>
+                
+                <div class="instructions">
+                    <strong>How it works:</strong>
+                    <ol>
+                        <li><strong>Tune In:</strong> Click here to sync audio.</li>
+                        <li><strong>Be the DJ:</strong> Paste a YouTube link to queue a song.</li>
+                        <li><strong>Vibe:</strong> Listen as the cassette spins in real-time.</li>
+                    </ol>
+                </div>
+                
+                <div class="cta">CLICK TO START! ▶</div>
             </div>
-            
-            <div class="cta">CLICK TO START!▶</div>
-        </div>
-    </button>
-</div>
+        </button>
+    </div>
 
     <div class="container">
 
@@ -67,7 +67,10 @@
 
     <div id="player"></div>
 
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.6.0/socket.io.min.js"></script>
+
     <script src="https://www.youtube.com/iframe_api"></script>
-    <script src="/static/script.js"></script>
+
+    <script src="{{ url_for('static', filename='script.js') }}"></script>
 </body>
-</html> 
+</html>

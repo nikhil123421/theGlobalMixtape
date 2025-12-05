@@ -5,13 +5,28 @@ import os
 import redis
 import json
 from flask import Flask, render_template, request, jsonify
+from flask_socketio import SocketIO, emit
 
 app = Flask(__name__)
+app.config['SECRET_KEY'] = 'secret_key_for_session'
 
-# --- CONFIGURATION ---
-# Connect to Render's Redis (or local for testing)
-redis_url = os.environ.get("REDIS_URL", "redis://localhost:6379")
-r = redis.from_url(redis_url)
+# --- REDIS SETUP ---
+try:
+    redis_url = os.environ.get("REDIS_URL", "redis://localhost:6379")
+    r = redis.from_url(redis_url)
+    r.ping()
+    print("✅ CONNECTED TO REDIS")
+except Exception as e:
+    print(f"⚠️ REDIS NOT FOUND. Using Mock. Error: {e}")
+    class MockRedis:
+        def __init__(self): self.store = {}
+        def get(self, name): return self.store.get(name)
+        def set(self, name, value): self.store[name] = value
+    r = MockRedis()
+
+# --- WEBSOCKET SETUP ---
+# async_mode='eventlet' is REQUIRED for Gunicorn to handle thousands of connections
+socketio = SocketIO(app, cors_allowed_origins="*", async_mode='eventlet')
 
 # --- STATE MANAGEMENT ---
 def get_room_state():
@@ -19,7 +34,6 @@ def get_room_state():
     raw = r.get("radio_state")
     if raw:
         return json.loads(raw)
-    # Default state if Redis is empty
     return {
         "playlist": [],
         "current_track": None,
@@ -30,8 +44,8 @@ def save_room_state(state):
     """Save the new state to Redis."""
     r.set("radio_state", json.dumps(state))
 
-# --- HELPER: YOUTUBE METADATA ---
 def get_video_details(url):
+    """Helper to fetch YouTube metadata."""
     video_id = None
     patterns = [
         r'(?:v=|\/)([0-9A-Za-z_-]{11}).*',
@@ -47,7 +61,7 @@ def get_video_details(url):
         return None
 
     try:
-        # Use oEmbed to get title/thumbnail without an API key
+        # Use oEmbed for metadata
         oembed_url = f"https://www.youtube.com/oembed?url=https://www.youtube.com/watch?v={video_id}&format=json"
         resp = requests.get(oembed_url, timeout=3)
         if resp.status_code != 200:
@@ -58,17 +72,30 @@ def get_video_details(url):
             "id": video_id,
             "title": data.get("title", "Unknown Track"),
             "thumbnail": data.get("thumbnail_url", ""),
-            "duration": 240 # Default fallback duration
+            "duration": 240
         }
     except:
         return None
 
-# --- CACHING VARIABLES ---
-# To prevent hammering Redis if 1000 users hit /sync simultaneously
-cache_data = None
-cache_time = 0
+# --- WEBSOCKET EVENTS ---
 
-# --- ROUTES ---
+@socketio.on('connect')
+def handle_connect():
+    """
+    When a user opens the page, immediately send them the current state.
+    No more waiting for the first poll!
+    """
+    state = get_room_state()
+    state['server_time'] = time.time()
+    emit('sync_event', state)
+
+def broadcast_update():
+    """Helper to send the current state to ALL connected users."""
+    state = get_room_state()
+    state['server_time'] = time.time()
+    socketio.emit('sync_event', state)
+
+# --- HTTP ROUTES ---
 
 @app.route('/')
 def index():
@@ -79,69 +106,37 @@ def add_song():
     data = request.json
     url = data.get('url')
     if not url:
-        return jsonify({"status": "error", "message": "No URL provided"}), 400
+        return jsonify({"status": "error"}), 400
 
     details = get_video_details(url)
     if details:
         state = get_room_state()
         
-        # If nothing is playing, play this immediately
         if state['current_track'] is None:
             state['current_track'] = details
             state['start_time'] = time.time()
         else:
-            # Add to queue
             state['playlist'].append(details)
         
         save_room_state(state)
+        
+        # TRIGGER REAL-TIME UPDATE
+        broadcast_update()
+        
         return jsonify({"status": "success", "track": details})
     
     return jsonify({"status": "error", "message": "Invalid YouTube URL"}), 400
 
-@app.route('/api/sync')
-def sync():
-    global cache_data, cache_time
-    
-    # 1. High-Traffic Cache Check
-    # If we calculated state less than 1 second ago, return cached version.
-    if time.time() - cache_time < 1 and cache_data:
-        # Update server_time so clients can calculate offset accurately
-        response = cache_data.copy()
-        response['server_time'] = time.time()
-        return jsonify(response)
-
-    # 2. Fetch Real State
-    state = get_room_state()
-    
-    response = {
-        "current_track": state['current_track'],
-        "start_time": state['start_time'],
-        "server_time": time.time(),
-        "queue": state['playlist']
-    }
-
-    # 3. Update Cache
-    cache_data = response
-    cache_time = time.time()
-
-    return jsonify(response)
-
 @app.route('/api/next', methods=['POST'])
 def next_track():
-    """
-    Called when a song ends.
-    Includes logic to prevent 'double skipping' if multiple users report end.
-    """
+    """Called when a song ends."""
     data = request.json
-    # The client tells us which song ended for them
     ended_id = data.get('ended_track_id') 
 
     state = get_room_state()
     current = state['current_track']
 
-    # CRITICAL CHECK:
-    # Only skip if the song the user says ended is ACTUALLY the one currently playing.
-    # This prevents 1000 users from skipping 1000 songs instantly.
+    # Race Condition Protection
     if current and current['id'] == ended_id:
         if state['playlist']:
             state['current_track'] = state['playlist'].pop(0)
@@ -151,10 +146,14 @@ def next_track():
             state['start_time'] = 0
         
         save_room_state(state)
+        
+        # TRIGGER REAL-TIME UPDATE
+        broadcast_update()
+        
         return jsonify({"status": "skipped"})
     
-    return jsonify({"status": "already_skipped"})
+    return jsonify({"status": "no_skip_needed"})
 
 if __name__ == '__main__':
-    # Local development
-    app.run(debug=True, port=5000)
+    # Use socketio.run instead of app.run
+    socketio.run(app, debug=True, port=5000)

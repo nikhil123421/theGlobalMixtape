@@ -1,4 +1,6 @@
-Flask
+flask
 requests
-redis
 gunicorn
+redis
+flask-socketio
+eventlet

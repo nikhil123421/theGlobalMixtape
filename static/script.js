@@ -1,7 +1,7 @@
 let player;
 let isStarted = false;
 let currentVideoId = null;
-let syncInterval;
+let socket; // Stores the WebSocket connection
 
 // 1. Initialize YouTube API
 function onYouTubeIframeAPIReady() {
@@ -22,87 +22,76 @@ function onYouTubeIframeAPIReady() {
 
 // 2. Handle Song Ending
 function onPlayerStateChange(event) {
-    // If video ends (State=0)
-    if (event.data === 0) {
-        // Tell the server specifically WHICH video ended
-        // This prevents the "Race Condition" where the playlist skips 
-        // multiple times if multiple users report the end at once.
-        if (currentVideoId) {
-            fetch('/api/next', { 
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ ended_track_id: currentVideoId })
-            });
-        }
+    // If video ends (State=0) and we know what was playing
+    if (event.data === 0 && currentVideoId) {
+        // We still use HTTP POST to tell the server "I finished"
+        // The server will then verify and Broadcast the "Next Song" command back to us via Socket
+        fetch('/api/next', { 
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ ended_track_id: currentVideoId })
+        });
     }
 }
 
-// 3. Start App Logic
+// 3. Start App & Connect Socket
 function startApp() {
     document.getElementById('startOverlay').style.display = 'none';
     isStarted = true;
     
-    // Initial Sync
-    syncState(); 
-    
-    // SCALE FIX: Poll every 10 seconds (instead of 2)
-    // This reduces server load by 500%
-    syncInterval = setInterval(syncState, 10000); 
+    // CONNECT TO WEBSOCKET
+    // (Make sure you added the socket.io script tag in your HTML head!)
+    socket = io();
+
+    // LISTEN: This replaces the old 'syncState' polling function
+    socket.on('sync_event', (data) => {
+        applyServerState(data);
+    });
 }
 
-// 4. The Sync Logic
-async function syncState() {
+// 4. Apply State (The "Puppet Master" Logic)
+function applyServerState(data) {
     if (!isStarted || !player) return;
 
-    try {
-        const res = await fetch('/api/sync');
-        const data = await res.json();
-        const { current_track, start_time, server_time, queue } = data;
+    const { current_track, start_time, server_time, queue } = data;
 
-        updateQueue(queue);
+    updateQueue(queue);
 
-        // Case A: Nothing playing
-        if (!current_track) {
-            document.getElementById('trackTitle').innerText = "Waiting for songs...";
-            // If player is running, stop it
-            if (player.getPlayerState && player.getPlayerState() === 1) {
-                player.stopVideo();
-            }
-            return;
+    // Case A: Nothing playing
+    if (!current_track) {
+        document.getElementById('trackTitle').innerText = "Waiting for songs...";
+        if (player.getPlayerState && player.getPlayerState() === 1) {
+            player.stopVideo();
         }
+        return;
+    }
 
-        document.getElementById('trackTitle').innerText = current_track.title;
+    document.getElementById('trackTitle').innerText = current_track.title;
 
-        // Calculate where the song should be
-        const elapsed = server_time - start_time;
+    // Calculate elapsed time using server's clock
+    const elapsed = server_time - start_time;
 
-        // Case B: A new song has started
-        if (currentVideoId !== current_track.id) {
-            currentVideoId = current_track.id;
-            player.loadVideoById(currentVideoId, elapsed);
-            // Ensure audio is unmuted (browsers sometimes auto-mute hidden videos)
-            player.unMute(); 
-            player.setVolume(100);
-        } 
-        // Case C: Same song, check for drift
-        else {
-            // Only seek if the player exists and is ready
-            if (player.getCurrentTime) {
-                const localTime = player.getCurrentTime();
-                
-                // If local player is off by more than 5 seconds, snap it back
-                if (Math.abs(localTime - elapsed) > 2) {
-                    player.seekTo(elapsed, true);
-                }
+    // Case B: New Song
+    if (currentVideoId !== current_track.id) {
+        currentVideoId = current_track.id;
+        player.loadVideoById(currentVideoId, elapsed);
+        player.unMute(); 
+        player.setVolume(100);
+    } 
+    // Case C: Same Song (Sync Check)
+    else {
+        if (player.getCurrentTime) {
+            const localTime = player.getCurrentTime();
+            
+            // With WebSockets, we can be tighter (2 seconds) because updates are instant
+            if (Math.abs(localTime - elapsed) > 2) {
+                player.seekTo(elapsed, true);
+            }
 
-                // If user paused it or it buffered, force play
-                if (player.getPlayerState() !== 1 && player.getPlayerState() !== 3) {
-                    player.playVideo();
-                }
+            if (player.getPlayerState() !== 1 && player.getPlayerState() !== 3) {
+                player.playVideo();
             }
         }
-    } catch (err) {
-        console.error("Sync failed:", err);
     }
 }
 
@@ -112,27 +101,22 @@ async function addSong() {
     const url = input.value;
     if (!url) return;
 
-    // Visual feedback
     input.value = "Adding...";
     input.disabled = true;
 
+    // We send the song via HTTP POST (Reliable)
+    // The server will process it and send the 'sync_event' via WebSocket to update the UI
     try {
-        const res = await fetch('/api/add', {
+        await fetch('/api/add', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ url: url })
         });
-
-        const data = await res.json();
-        if (data.status === 'success') {
-            input.value = ''; // Clear input
-            syncState(); // Update UI immediately
-        } else {
-            alert("Error: " + data.message);
-            input.value = '';
-        }
+        
+        input.value = ''; 
+        // No need to call syncState() manually anymore! The socket will do it.
     } catch (e) {
-        alert("Failed to connect to server");
+        alert("Failed to add song.");
     } finally {
         input.disabled = false;
     }
