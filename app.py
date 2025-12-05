@@ -1,7 +1,7 @@
-
 # --- MUST BE THE VERY FIRST LINES ---
 import eventlet
 eventlet.monkey_patch()
+
 import time
 import re
 import requests
@@ -87,7 +87,6 @@ def get_video_details(url):
 def handle_connect():
     """
     When a user opens the page, immediately send them the current state.
-    No more waiting for the first poll!
     """
     state = get_room_state()
     state['server_time'] = time.time()
@@ -159,5 +158,4 @@ def next_track():
     return jsonify({"status": "no_skip_needed"})
 
 if __name__ == '__main__':
-    # Use socketio.run instead of app.run
     socketio.run(app, debug=True, port=5000)

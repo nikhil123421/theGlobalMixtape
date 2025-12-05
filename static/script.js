@@ -22,10 +22,7 @@ function onYouTubeIframeAPIReady() {
 
 // 2. Handle Song Ending
 function onPlayerStateChange(event) {
-    // If video ends (State=0) and we know what was playing
     if (event.data === 0 && currentVideoId) {
-        // We still use HTTP POST to tell the server "I finished"
-        // The server will then verify and Broadcast the "Next Song" command back to us via Socket
         fetch('/api/next', { 
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -40,20 +37,22 @@ function startApp() {
     isStarted = true;
     
     // CONNECT TO WEBSOCKET
-    // (Make sure you added the socket.io script tag in your HTML head!)
     socket = io();
 
-    // LISTEN: This replaces the old 'syncState' polling function
     socket.on('sync_event', (data) => {
         applyServerState(data);
     });
 }
 
-// 4. Apply State (The "Puppet Master" Logic)
+// 4. Apply State (FIXED: Now reads 'playlist' correctly)
 function applyServerState(data) {
     if (!isStarted || !player) return;
 
-    const { current_track, start_time, server_time, queue } = data;
+    // FIX: Python sends 'playlist', NOT 'queue'
+    const { current_track, start_time, server_time, playlist } = data;
+    
+    // Safety check: ensure queue is an array even if server sends nothing
+    const queue = playlist || [];
 
     updateQueue(queue);
 
@@ -82,12 +81,9 @@ function applyServerState(data) {
     else {
         if (player.getCurrentTime) {
             const localTime = player.getCurrentTime();
-            
-            // With WebSockets, we can be tighter (2 seconds) because updates are instant
             if (Math.abs(localTime - elapsed) > 2) {
                 player.seekTo(elapsed, true);
             }
-
             if (player.getPlayerState() !== 1 && player.getPlayerState() !== 3) {
                 player.playVideo();
             }
@@ -104,17 +100,13 @@ async function addSong() {
     input.value = "Adding...";
     input.disabled = true;
 
-    // We send the song via HTTP POST (Reliable)
-    // The server will process it and send the 'sync_event' via WebSocket to update the UI
     try {
         await fetch('/api/add', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ url: url })
         });
-        
         input.value = ''; 
-        // No need to call syncState() manually anymore! The socket will do it.
     } catch (e) {
         alert("Failed to add song.");
     } finally {
@@ -128,9 +120,12 @@ function updateQueue(queue) {
     if(!list) return;
     
     list.innerHTML = '';
-    queue.forEach(track => {
-        const li = document.createElement('li');
-        li.innerText = track.title;
-        list.appendChild(li);
-    });
+    // Extra safety check to prevent crash
+    if (Array.isArray(queue)) {
+        queue.forEach(track => {
+            const li = document.createElement('li');
+            li.innerText = track.title;
+            list.appendChild(li);
+        });
+    }
 }
