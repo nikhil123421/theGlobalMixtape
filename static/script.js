@@ -20,8 +20,7 @@ function onYouTubeIframeAPIReady() {
 // 2. Handle Song Ending (Auto-Next)
 function onPlayerStateChange(event) {
     if (event.data === YT.PlayerState.ENDED) {
-        // tell server to advance to next track
-        fetch('/api/next', { method: 'POST' }).catch(console.error);
+        fetch('/api/next', { method: 'POST' });
     }
 }
 
@@ -37,32 +36,19 @@ function startApp() {
 async function syncState() {
     if (!isStarted || !player) return;
 
-    let res;
-    try {
-        res = await fetch('/api/sync');
-    } catch (e) {
-        console.error('sync failed', e);
-        return;
-    }
-    let data;
-    try {
-        data = await res.json();
-    } catch (e) {
-        console.error('invalid json', e);
-        return;
-    }
+    const res = await fetch('/api/sync');
+    const data = await res.json();
 
     const { current_track, start_time, server_time, queue } = data;
     const cassette = document.querySelector('.cassette');
 
     // A. Update UI
     updateQueue(queue);
-
+    
     if (!current_track) {
         document.getElementById('trackTitle').innerText = "End of Tape (Add a Song)";
         cassette.classList.remove('spinning');
-        try { player.stopVideo(); } catch (e) {}
-        currentVideoId = null;
+        player.stopVideo();
         return;
     }
 
@@ -75,29 +61,20 @@ async function syncState() {
     // If we are playing a different song than the server, load the new one
     if (currentVideoId !== current_track.id) {
         currentVideoId = current_track.id;
-        // load with offset (elapsed)
-        try {
-            player.loadVideoById(currentVideoId, elapsed);
-            cassette.classList.add('spinning');
-        } catch (e) {
-            console.error('error loading video', e);
-        }
+        player.loadVideoById(currentVideoId, elapsed);
+        cassette.classList.add('spinning');
     } 
     else {
         // We are on the same song, check if we drifted too far (sync check)
-        try {
-            const localTime = player.getCurrentTime();
-            if (Math.abs(localTime - elapsed) > 3) {
-                player.seekTo(elapsed, true);
-            }
-
-            // Ensure it's playing (state 1 = playing, 3 = buffering)
-            const state = player.getPlayerState();
-            if (state !== 1 && state !== 3) {
-                player.playVideo();
-            }
-        } catch (e) {
-            // sometimes player isn't ready yet
+        // If our local player is more than 3 seconds off from server time, seek.
+        const localTime = player.getCurrentTime();
+        if (Math.abs(localTime - elapsed) > 3) {
+            player.seekTo(elapsed, true);
+        }
+        
+        // Ensure it's playing
+        if (player.getPlayerState() !== 1 && player.getPlayerState() !== 3) {
+            player.playVideo();
         }
     }
 }
@@ -107,30 +84,24 @@ async function addSong() {
     const url = document.getElementById('songUrl').value;
     if (!url) return;
 
-    try {
-        const res = await fetch('/api/add', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ url: url })
-        });
+    const res = await fetch('/api/add', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url: url })
+    });
 
-        const data = await res.json();
-        if (data.status === 'success') {
-            document.getElementById('songUrl').value = ''; // Clear input
-            syncState();
-        } else {
-            alert("Invalid YouTube Link!");
-        }
-    } catch (e) {
-        alert("Failed to add song. Try again.");
-        console.error(e);
+    const data = await res.json();
+    if (data.status === 'success') {
+        document.getElementById('songUrl').value = ''; // Clear input
+        syncState();
+    } else {
+        alert("Invalid YouTube Link!");
     }
 }
 
 // 6. Helper: Render Queue
 function updateQueue(queue) {
     const list = document.getElementById('queueList');
-    if (!list) return;
     list.innerHTML = '';
     queue.forEach(track => {
         const li = document.createElement('li');
