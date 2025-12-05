@@ -91,7 +91,7 @@ async function syncState() {
                 const localTime = player.getCurrentTime();
                 
                 // If local player is off by more than 5 seconds, snap it back
-                if (Math.abs(localTime - elapsed) > 5) {
+                if (Math.abs(localTime - elapsed) > 2) {
                     player.seekTo(elapsed, true);
                 }
 
