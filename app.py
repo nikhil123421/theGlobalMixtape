@@ -1,3 +1,7 @@
+
+# --- MUST BE THE VERY FIRST LINES ---
+import eventlet
+eventlet.monkey_patch()
 import time
 import re
 import requests
