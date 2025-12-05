@@ -8,6 +8,7 @@ import requests
 import os
 import redis
 import json
+from eventlet import tpool # <--- NEW IMPORT
 from flask import Flask, render_template, request, jsonify
 from flask_socketio import SocketIO, emit
 
@@ -29,7 +30,7 @@ except Exception as e:
     r = MockRedis()
 
 # --- WEBSOCKET SETUP ---
-# async_mode='eventlet' is REQUIRED for Gunicorn to handle thousands of connections
+# Added logger=True to help debug if it fails again
 socketio = SocketIO(app, cors_allowed_origins="*", async_mode='eventlet', logger=True, engineio_logger=True)
 
 # --- STATE MANAGEMENT ---
@@ -67,7 +68,12 @@ def get_video_details(url):
     try:
         # Use oEmbed for metadata
         oembed_url = f"https://www.youtube.com/oembed?url=https://www.youtube.com/watch?v={video_id}&format=json"
-        resp = requests.get(oembed_url, timeout=3)
+        
+        # --- THE FIX IS HERE ---
+        # We use tpool.execute to run requests.get in a background thread.
+        # This prevents the main server loop from freezing while waiting for YouTube.
+        resp = tpool.execute(requests.get, oembed_url, timeout=3)
+        
         if resp.status_code != 200:
             return None
             
@@ -85,15 +91,11 @@ def get_video_details(url):
 
 @socketio.on('connect')
 def handle_connect():
-    """
-    When a user opens the page, immediately send them the current state.
-    """
     state = get_room_state()
     state['server_time'] = time.time()
     emit('sync_event', state)
 
 def broadcast_update():
-    """Helper to send the current state to ALL connected users."""
     state = get_room_state()
     state['server_time'] = time.time()
     socketio.emit('sync_event', state)
@@ -132,14 +134,12 @@ def add_song():
 
 @app.route('/api/next', methods=['POST'])
 def next_track():
-    """Called when a song ends."""
     data = request.json
     ended_id = data.get('ended_track_id') 
 
     state = get_room_state()
     current = state['current_track']
 
-    # Race Condition Protection
     if current and current['id'] == ended_id:
         if state['playlist']:
             state['current_track'] = state['playlist'].pop(0)
@@ -149,10 +149,7 @@ def next_track():
             state['start_time'] = 0
         
         save_room_state(state)
-        
-        # TRIGGER REAL-TIME UPDATE
         broadcast_update()
-        
         return jsonify({"status": "skipped"})
     
     return jsonify({"status": "no_skip_needed"})
