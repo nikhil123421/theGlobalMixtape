@@ -30,7 +30,7 @@ except Exception as e:
 
 # --- WEBSOCKET SETUP ---
 # async_mode='eventlet' is REQUIRED for Gunicorn to handle thousands of connections
-socketio = SocketIO(app, cors_allowed_origins="*", async_mode='eventlet')
+socketio = SocketIO(app, cors_allowed_origins="*", async_mode='eventlet', logger=True, engineio_logger=True)
 
 # --- STATE MANAGEMENT ---
 def get_room_state():
