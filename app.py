@@ -31,7 +31,7 @@ except Exception as e:
 
 # --- WEBSOCKET SETUP ---
 # Added logger=True to help debug if it fails again
-socketio = SocketIO(app, cors_allowed_origins="*", async_mode='eventlet', message_queue=redis_url)
+socketio = SocketIO(app, cors_allowed_origins="*", async_mode='eventlet', logger=True, engineio_logger=True)
 
 # --- STATE MANAGEMENT ---
 def get_room_state():
