@@ -62,6 +62,9 @@ function applyServerState(data) {
         if (player.getPlayerState && player.getPlayerState() === 1) {
             player.stopVideo();
         }
+        // STOP SPINNING
+        if (leftSpool) leftSpool.classList.remove('spinning');
+        if (rightSpool) rightSpool.classList.remove('spinning');
         return;
     }
 
@@ -77,15 +80,26 @@ function applyServerState(data) {
         player.unMute(); 
         player.setVolume(100);
     } 
-    // Case C: Same Song (Sync Check)
     else {
         if (player.getCurrentTime) {
             const localTime = player.getCurrentTime();
             if (Math.abs(localTime - elapsed) > 2) {
                 player.seekTo(elapsed, true);
             }
-            if (player.getPlayerState() !== 1 && player.getPlayerState() !== 3) {
-                player.playVideo();
+
+            const playerState = player.getPlayerState();
+            // If playing (1) or buffering (3), ensure it's playing and spinning
+            if (playerState === 1 || playerState === 3) {
+                 if (playerState !== 1) player.playVideo();
+                 // START SPINNING
+                 if (leftSpool) leftSpool.classList.add('spinning');
+                 if (rightSpool) rightSpool.classList.add('spinning');
+            } 
+            // If paused (2) or ended (0), stop spinning
+            else if (playerState === 2 || playerState === 0) {
+                 // STOP SPINNING
+                 if (leftSpool) leftSpool.classList.remove('spinning');
+                 if (rightSpool) rightSpool.classList.remove('spinning');
             }
         }
     }
