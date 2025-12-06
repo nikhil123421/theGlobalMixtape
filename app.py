@@ -8,12 +8,15 @@ import requests
 import os
 import redis
 import json
-from eventlet import tpool # <--- NEW IMPORT
+from eventlet import tpool
 from flask import Flask, render_template, request, jsonify
 from flask_socketio import SocketIO, emit
 
 app = Flask(__name__)
 app.config['SECRET_KEY'] = 'secret_key_for_session'
+
+# --- CONFIGURATION ---
+COOLDOWN_SECONDS = 600  # 10 Minutes (600 seconds)
 
 # --- REDIS SETUP ---
 try:
@@ -27,10 +30,12 @@ except Exception as e:
         def __init__(self): self.store = {}
         def get(self, name): return self.store.get(name)
         def set(self, name, value): self.store[name] = value
+        # Updated Mock to support rate limiting
+        def exists(self, name): return name in self.store
+        def setex(self, name, time, value): self.store[name] = value
     r = MockRedis()
 
 # --- WEBSOCKET SETUP ---
-# Added logger=True to help debug if it fails again
 socketio = SocketIO(app, cors_allowed_origins="*", async_mode='eventlet', logger=True, engineio_logger=True)
 
 # --- STATE MANAGEMENT ---
@@ -49,6 +54,12 @@ def save_room_state(state):
     """Save the new state to Redis."""
     r.set("radio_state", json.dumps(state))
 
+def get_client_ip():
+    """Get the real IP address, even behind Render's proxy."""
+    if request.headers.getlist("X-Forwarded-For"):
+        return request.headers.getlist("X-Forwarded-For")[0]
+    return request.remote_addr
+
 def get_video_details(url):
     """Helper to fetch YouTube metadata."""
     video_id = None
@@ -66,12 +77,9 @@ def get_video_details(url):
         return None
 
     try:
-        # Use oEmbed for metadata
         oembed_url = f"https://www.youtube.com/oembed?url=https://www.youtube.com/watch?v={video_id}&format=json"
         
-        # --- THE FIX IS HERE ---
-        # We use tpool.execute to run requests.get in a background thread.
-        # This prevents the main server loop from freezing while waiting for YouTube.
+        # Use tpool to prevent server freezing
         resp = tpool.execute(requests.get, oembed_url, timeout=3)
         
         if resp.status_code != 200:
@@ -108,6 +116,18 @@ def index():
 
 @app.route('/api/add', methods=['POST'])
 def add_song():
+    # 1. SPAM CHECK
+    client_ip = get_client_ip()
+    limit_key = f"limit:{client_ip}"
+    
+    # Check if this IP is already blocked
+    if r.exists(limit_key):
+        return jsonify({
+            "status": "error", 
+            "message": f"Please wait {int(COOLDOWN_SECONDS/60)} minutes before adding another song!"
+        }), 429
+
+    # 2. STANDARD LOGIC
     data = request.json
     url = data.get('url')
     if not url:
@@ -128,7 +148,14 @@ def add_song():
         # TRIGGER REAL-TIME UPDATE
         broadcast_update()
         
-        return jsonify({"status": "success", "track": details})
+        # 3. SET COOLDOWN (Mark this IP as "busy" for 10 mins)
+        r.setex(limit_key, COOLDOWN_SECONDS, "1")
+        
+        return jsonify({
+            "status": "success", 
+            "track": details,
+            "message": f"Success! You can add a new song after {int(COOLDOWN_SECONDS/60)} minutes."
+        })
     
     return jsonify({"status": "error", "message": "Invalid YouTube URL"}), 400
 
