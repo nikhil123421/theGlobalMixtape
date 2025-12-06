@@ -44,17 +44,19 @@ function startApp() {
     });
 }
 
-// 4. Apply State (FIXED: Now reads 'playlist' correctly)
+// 4. Apply State (FIXED: Defined Spool Variables)
 function applyServerState(data) {
     if (!isStarted || !player) return;
 
     // FIX: Python sends 'playlist', NOT 'queue'
     const { current_track, start_time, server_time, playlist } = data;
     
-    // Safety check: ensure queue is an array even if server sends nothing
     const queue = playlist || [];
-
     updateQueue(queue);
+
+    // --- FIX IS HERE: DEFINE THE SPOOLS ---
+    const leftSpool = document.querySelector('.spool.left');
+    const rightSpool = document.querySelector('.spool.right');
 
     // Case A: Nothing playing
     if (!current_track) {
@@ -80,6 +82,7 @@ function applyServerState(data) {
         player.unMute(); 
         player.setVolume(100);
     } 
+    // Case C: Same Song (Sync Check)
     else {
         if (player.getCurrentTime) {
             const localTime = player.getCurrentTime();
@@ -88,9 +91,11 @@ function applyServerState(data) {
             }
 
             const playerState = player.getPlayerState();
+            
             // If playing (1) or buffering (3), ensure it's playing and spinning
             if (playerState === 1 || playerState === 3) {
                  if (playerState !== 1) player.playVideo();
+                 
                  // START SPINNING
                  if (leftSpool) leftSpool.classList.add('spinning');
                  if (rightSpool) rightSpool.classList.add('spinning');
@@ -134,7 +139,6 @@ function updateQueue(queue) {
     if(!list) return;
     
     list.innerHTML = '';
-    // Extra safety check to prevent crash
     if (Array.isArray(queue)) {
         queue.forEach(track => {
             const li = document.createElement('li');
